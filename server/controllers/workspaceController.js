@@ -220,6 +220,7 @@ exports.addWorkspaceMember = async (req, res, next) => {
     await workspace.save();
 
     const populatedWorkspace = await Workspace.findById(req.params.id)
+      .populate('owner', 'name email avatar')
       .populate('members.user', 'name email avatar role');
 
     res.status(200).json({
@@ -275,6 +276,7 @@ exports.removeWorkspaceMember = async (req, res, next) => {
     await workspace.save();
 
     const populatedWorkspace = await Workspace.findById(req.params.id)
+      .populate('owner', 'name email avatar')
       .populate('members.user', 'name email avatar role');
 
     res.status(200).json({
@@ -335,6 +337,7 @@ exports.assignWorkspaceMemberRole = async (req, res, next) => {
     await workspace.save();
 
     const populatedWorkspace = await Workspace.findById(req.params.id)
+      .populate('owner', 'name email avatar')
       .populate('members.user', 'name email avatar role');
 
     res.status(200).json({

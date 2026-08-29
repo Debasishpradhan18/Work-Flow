@@ -168,7 +168,10 @@ exports.updateProject = async (req, res, next) => {
         }
       },
       { new: true, runValidators: true }
-    );
+    )
+      .populate('owner', 'name email avatar')
+      .populate('members', 'name email avatar role')
+      .populate('workspace', 'name owner');
 
     res.status(200).json({
       success: true,
@@ -273,7 +276,9 @@ exports.addProjectMember = async (req, res, next) => {
     await project.save();
 
     const populatedProject = await Project.findById(req.params.id)
-      .populate('members', 'name email avatar role');
+      .populate('owner', 'name email avatar')
+      .populate('members', 'name email avatar role')
+      .populate('workspace', 'name owner');
 
     res.status(200).json({
       success: true,
@@ -324,7 +329,9 @@ exports.removeProjectMember = async (req, res, next) => {
     await project.save();
 
     const populatedProject = await Project.findById(req.params.id)
-      .populate('members', 'name email avatar role');
+      .populate('owner', 'name email avatar')
+      .populate('members', 'name email avatar role')
+      .populate('workspace', 'name owner');
 
     res.status(200).json({
       success: true,

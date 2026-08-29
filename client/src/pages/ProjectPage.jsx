@@ -809,7 +809,8 @@ const ProjectPage = () => {
               {/* List */}
               <div className="space-y-3 pt-2">
                 {project?.members.map((m) => {
-                  const isPMOwner = project.owner._id.toString() === m._id.toString();
+                  const projectOwnerId = project.owner?._id || project.owner;
+                  const isPMOwner = projectOwnerId?.toString() === m._id.toString();
                   return (
                     <div key={m._id} className="flex items-center justify-between text-xs">
                       <div className="flex items-center gap-2 truncate">

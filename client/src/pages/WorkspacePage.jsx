@@ -197,10 +197,11 @@ const WorkspacePage = () => {
 
   // Check workspace permissions
   const workspaceMemberObj = workspace?.members.find(
-    (m) => m.user._id.toString() === user?._id.toString()
+    (m) => m.user?._id?.toString() === user?._id?.toString()
   );
-  const isWorkspaceAdmin = workspaceMemberObj?.role === 'admin' || workspace?.owner._id.toString() === user?._id.toString();
-  const isWorkspaceOwner = workspace?.owner._id.toString() === user?._id.toString();
+  const workspaceOwnerId = workspace?.owner?._id || workspace?.owner;
+  const isWorkspaceAdmin = workspaceMemberObj?.role === 'admin' || workspaceOwnerId?.toString() === user?._id?.toString();
+  const isWorkspaceOwner = workspaceOwnerId?.toString() === user?._id?.toString();
 
   return (
     <div className="space-y-6">
@@ -310,9 +311,9 @@ const WorkspacePage = () => {
           </div>
 
           <div className="glass-card p-4 space-y-4">
-            {workspace?.members.map((member) => {
+            {workspace?.members.filter(m => m.user).map((member) => {
               const isMemberSelf = member.user._id.toString() === user?._id.toString();
-              const isMemberOwner = workspace.owner._id.toString() === member.user._id.toString();
+              const isMemberOwner = workspaceOwnerId?.toString() === member.user._id.toString();
               return (
                 <div key={member.user._id} className="flex items-center justify-between gap-3 text-sm">
                   <div className="flex items-center gap-2.5 truncate">
