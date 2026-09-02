@@ -1,9 +1,11 @@
 const Task = require('../models/Task');
 const Project = require('../models/Project');
+const Workspace = require('../models/Workspace');
 const Notification = require('../models/Notification');
 const fs = require('fs');
 const path = require('path');
 const { uploadToCloudinary } = require('../services/cloudinaryService');
+const { isAuthorizedForProject } = require('../middleware/auth');
 
 // @desc    Create a task
 // @route   POST /api/tasks
@@ -24,14 +26,17 @@ exports.createTask = async (req, res, next) => {
       throw new Error('Project not found');
     }
 
-    // User must be a member of the project to create tasks
-    const isMember = project.members.some(
-      (mId) => mId.toString() === req.user._id.toString()
-    );
-
-    if (!isMember && req.user.role !== 'admin') {
+    // User must be authorized for this project
+    const authorized = await isAuthorizedForProject(project, req.user);
+    if (!authorized) {
       res.status(403);
       throw new Error('Not authorized to create tasks in this project');
+    }
+
+    // Auto-add assignee to project members if not already included
+    if (assignedTo && !project.members.some(m => (m._id || m).toString() === assignedTo.toString())) {
+      project.members.push(assignedTo);
+      await project.save();
     }
 
     const task = await Task.create({
@@ -43,6 +48,10 @@ exports.createTask = async (req, res, next) => {
       priority: priority || 'medium',
       dueDate: dueDate || null
     });
+
+    const populatedTask = await Task.findById(task._id)
+      .populate('assignedTo', 'name email avatar')
+      .populate('createdBy', 'name email avatar');
 
     // Create notification if assigned to another user
     if (assignedTo && assignedTo.toString() !== req.user._id.toString()) {
@@ -59,7 +68,7 @@ exports.createTask = async (req, res, next) => {
     res.status(201).json({
       success: true,
       message: 'Task created successfully',
-      data: task
+      data: populatedTask
     });
   } catch (error) {
     next(error);
@@ -77,12 +86,9 @@ exports.getTasksByProject = async (req, res, next) => {
       throw new Error('Project not found');
     }
 
-    // Verify membership
-    const isMember = project.members.some(
-      (mId) => mId.toString() === req.user._id.toString()
-    );
-
-    if (!isMember && req.user.role !== 'admin') {
+    // Verify access authorization
+    const authorized = await isAuthorizedForProject(project, req.user);
+    if (!authorized) {
       res.status(403);
       throw new Error('Not authorized to access tasks in this project');
     }
@@ -146,7 +152,7 @@ exports.getTaskById = async (req, res, next) => {
       .populate('createdBy', 'name email avatar')
       .populate({
         path: 'project',
-        select: 'name members workspace'
+        select: 'name members workspace owner'
       });
 
     if (!task) {
@@ -154,13 +160,10 @@ exports.getTaskById = async (req, res, next) => {
       throw new Error('Task not found');
     }
 
-    // Verify workspace membership
-    const project = await Project.findById(task.project._id);
-    const isMember = project && project.members.some(
-      (mId) => mId.toString() === req.user._id.toString()
-    );
-
-    if (!isMember && req.user.role !== 'admin') {
+    // Verify project authorization
+    const project = await Project.findById(task.project._id || task.project);
+    const authorized = await isAuthorizedForProject(project, req.user);
+    if (!authorized) {
       res.status(403);
       throw new Error('Not authorized to access this task');
     }
@@ -174,7 +177,7 @@ exports.getTaskById = async (req, res, next) => {
   }
 };
 
-// @desc    Update task details
+// @desc    Update task details (Role-aware)
 // @route   PUT /api/tasks/:id
 // @access  Private
 exports.updateTask = async (req, res, next) => {
@@ -188,13 +191,48 @@ exports.updateTask = async (req, res, next) => {
     }
 
     const project = await Project.findById(task.project);
-    const isMember = project && project.members.some(
-      (mId) => mId.toString() === req.user._id.toString()
-    );
-
-    if (!isMember && req.user.role !== 'admin') {
+    const authorized = await isAuthorizedForProject(project, req.user);
+    if (!authorized) {
       res.status(403);
       throw new Error('Not authorized to update tasks in this project');
+    }
+
+    // Check if user has management permissions (SysAdmin, ProjectOwner, TaskCreator, or Workspace Admin/Manager)
+    const isSysAdmin = req.user.role === 'admin';
+    const isProjectOwner = project && (project.owner?._id || project.owner).toString() === req.user._id.toString();
+    const isCreator = task.createdBy.toString() === req.user._id.toString();
+
+    let isWsAdminOrManager = false;
+    if (project && project.workspace) {
+      const workspaceId = project.workspace._id || project.workspace;
+      const workspace = await Workspace.findById(workspaceId);
+      if (workspace) {
+        if (workspace.owner && workspace.owner.toString() === req.user._id.toString()) {
+          isWsAdminOrManager = true;
+        }
+        const wsMember = workspace.members && workspace.members.find(
+          (m) => (m.user?._id || m.user).toString() === req.user._id.toString()
+        );
+        if (wsMember && ['admin', 'manager'].includes(wsMember.role)) {
+          isWsAdminOrManager = true;
+        }
+      }
+    }
+
+    const canManageTask = isSysAdmin || isProjectOwner || isCreator || isWsAdminOrManager;
+
+    // Regular members can only update status, they cannot alter core assignment, priority, dueDate, title, or description
+    if (!canManageTask) {
+      if (title !== undefined || description !== undefined || assignedTo !== undefined || priority !== undefined || dueDate !== undefined) {
+        res.status(403);
+        throw new Error('Members can only update task status. Modifying priority, assignee, due date, or description requires Manager or Admin permissions.');
+      }
+    }
+
+    // Auto-add new assignee to project members if not already included
+    if (assignedTo && project && !project.members.some(m => (m._id || m).toString() === assignedTo.toString())) {
+      project.members.push(assignedTo);
+      await project.save();
     }
 
     const oldAssignee = task.assignedTo;
@@ -202,18 +240,22 @@ exports.updateTask = async (req, res, next) => {
 
     // Build update object
     const updateData = {};
-    if (title !== undefined) updateData.title = title;
-    if (description !== undefined) updateData.description = description;
-    if (assignedTo !== undefined) updateData.assignedTo = assignedTo || null;
-    if (priority !== undefined) updateData.priority = priority;
+    if (canManageTask) {
+      if (title !== undefined) updateData.title = title;
+      if (description !== undefined) updateData.description = description;
+      if (assignedTo !== undefined) updateData.assignedTo = assignedTo || null;
+      if (priority !== undefined) updateData.priority = priority;
+      if (dueDate !== undefined) updateData.dueDate = dueDate || null;
+    }
     if (status !== undefined) updateData.status = status;
-    if (dueDate !== undefined) updateData.dueDate = dueDate || null;
 
     task = await Task.findByIdAndUpdate(
       req.params.id,
       { $set: updateData },
       { new: true, runValidators: true }
-    );
+    )
+      .populate('assignedTo', 'name email avatar')
+      .populate('createdBy', 'name email avatar');
 
     // Create notifications for assignments / status updates
     if (assignedTo && assignedTo.toString() !== req.user._id.toString() && (!oldAssignee || oldAssignee.toString() !== assignedTo.toString())) {
@@ -227,9 +269,9 @@ exports.updateTask = async (req, res, next) => {
       });
     }
 
-    if (status && oldStatus !== status && task.assignedTo && task.assignedTo.toString() !== req.user._id.toString()) {
+    if (status && oldStatus !== status && task.assignedTo && (task.assignedTo._id || task.assignedTo).toString() !== req.user._id.toString()) {
       await Notification.create({
-        recipient: task.assignedTo,
+        recipient: task.assignedTo._id || task.assignedTo,
         sender: req.user._id,
         type: 'status_changed',
         message: `Task status for "${task.title}" was updated from "${oldStatus}" to "${status}" by ${req.user.name}`,
@@ -267,11 +309,8 @@ exports.updateTaskStatus = async (req, res, next) => {
     }
 
     const project = await Project.findById(task.project);
-    const isMember = project && project.members.some(
-      (mId) => mId.toString() === req.user._id.toString()
-    );
-
-    if (!isMember && req.user.role !== 'admin') {
+    const authorized = await isAuthorizedForProject(project, req.user);
+    if (!authorized) {
       res.status(403);
       throw new Error('Not authorized to update task status');
     }
@@ -279,6 +318,10 @@ exports.updateTaskStatus = async (req, res, next) => {
     const oldStatus = task.status;
     task.status = status;
     await task.save();
+
+    const populatedTask = await Task.findById(task._id)
+      .populate('assignedTo', 'name email avatar')
+      .populate('createdBy', 'name email avatar');
 
     // Notify assignee if status changed by someone else
     if (task.assignedTo && task.assignedTo.toString() !== req.user._id.toString()) {
@@ -295,7 +338,7 @@ exports.updateTaskStatus = async (req, res, next) => {
     res.status(200).json({
       success: true,
       message: 'Task status updated successfully',
-      data: task
+      data: populatedTask
     });
   } catch (error) {
     next(error);
@@ -317,11 +360,25 @@ exports.deleteTask = async (req, res, next) => {
     
     // Authorization: Must be task creator, project owner, workspace admin or system manager/admin
     const isCreator = task.createdBy.toString() === req.user._id.toString();
-    const isProjectOwner = project && project.owner.toString() === req.user._id.toString();
+    const isProjectOwner = project && (project.owner._id || project.owner).toString() === req.user._id.toString();
+    const isSysAdmin = req.user.role === 'admin';
 
-    if (!isCreator && !isProjectOwner && req.user.role === 'member') {
+    let isWsAdmin = false;
+    if (project && project.workspace) {
+      const workspaceId = project.workspace._id || project.workspace;
+      const workspace = await Workspace.findById(workspaceId);
+      if (workspace) {
+        if (workspace.owner && workspace.owner.toString() === req.user._id.toString()) isWsAdmin = true;
+        const wsMember = workspace.members && workspace.members.find(
+          (m) => (m.user?._id || m.user).toString() === req.user._id.toString()
+        );
+        if (wsMember && wsMember.role === 'admin') isWsAdmin = true;
+      }
+    }
+
+    if (!isCreator && !isProjectOwner && !isSysAdmin && !isWsAdmin) {
       res.status(403);
-      throw new Error('Not authorized to delete this task');
+      throw new Error('Only the task creator, project owner, or workspace admin can delete this task');
     }
 
     await task.deleteOne();
@@ -355,13 +412,10 @@ exports.uploadAttachment = async (req, res, next) => {
       throw new Error('Task not found');
     }
 
-    // Verify project membership
+    // Verify project authorization
     const project = await Project.findById(task.project);
-    const isMember = project && project.members.some(
-      (mId) => mId.toString() === req.user._id.toString()
-    );
-
-    if (!isMember && req.user.role !== 'admin') {
+    const authorized = await isAuthorizedForProject(project, req.user);
+    if (!authorized) {
       if (fs.existsSync(req.file.path)) {
         fs.unlinkSync(req.file.path);
       }
@@ -416,13 +470,10 @@ exports.deleteAttachment = async (req, res, next) => {
       throw new Error('Task not found');
     }
 
-    // Check project membership
+    // Check project authorization
     const project = await Project.findById(task.project);
-    const isMember = project && project.members.some(
-      (mId) => mId.toString() === req.user._id.toString()
-    );
-
-    if (!isMember && req.user.role !== 'admin') {
+    const authorized = await isAuthorizedForProject(project, req.user);
+    if (!authorized) {
       res.status(403);
       throw new Error('Not authorized to delete files from this task');
     }
@@ -436,7 +487,7 @@ exports.deleteAttachment = async (req, res, next) => {
 
     // Verify creator or project manager/admin role
     const isUploader = attachment.uploadedBy.toString() === req.user._id.toString();
-    const isProjectOwner = project && project.owner.toString() === req.user._id.toString();
+    const isProjectOwner = project && (project.owner._id || project.owner).toString() === req.user._id.toString();
 
     if (!isUploader && !isProjectOwner && req.user.role === 'member') {
       res.status(403);
@@ -447,7 +498,6 @@ exports.deleteAttachment = async (req, res, next) => {
     const isCloudinary = attachment.url.includes('cloudinary.com');
     if (isCloudinary) {
       // Cloudinary deletion can be integrated here, but for now we delete it from DB.
-      // E.g. using cloudinary.uploader.destroy(attachment.publicId)
     } else {
       const localFilePath = path.join(__dirname, '../uploads', attachment.publicId);
       if (fs.existsSync(localFilePath)) {

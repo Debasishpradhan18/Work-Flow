@@ -31,12 +31,12 @@ const DashboardLayout = () => {
       />
 
       {/* Main container */}
-      <div className="flex-1 flex flex-col md:pl-64 min-w-0">
+      <div className="flex-1 flex flex-col md:pl-64 min-w-0 min-h-screen">
         {/* Top Navbar */}
         <Navbar toggleSidebar={toggleSidebar} title={getNavbarTitle()} />
 
         {/* Content Body */}
-        <main className="flex-1 pt-16 p-4 md:p-6 overflow-y-auto">
+        <main className="flex-1 p-4 md:p-6 overflow-y-auto">
           <Outlet />
         </main>
       </div>

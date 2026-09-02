@@ -7,7 +7,7 @@ const User = require('../models/User');
 // @access  Private
 exports.createProject = async (req, res, next) => {
   try {
-    const { name, description, workspaceId, priority, startDate, dueDate } = req.body;
+    const { name, description, workspaceId, priority, startDate, dueDate, members } = req.body;
 
     if (!name || !workspaceId) {
       res.status(400);
@@ -35,12 +35,21 @@ exports.createProject = async (req, res, next) => {
       throw new Error('Only Workspace Admins/Managers or system Managers/Admins can create projects');
     }
 
+    // Initialize project members with owner/creator
+    let projectMembers = [req.user._id];
+    if (members && Array.isArray(members)) {
+      // Filter members to only those who belong to the workspace
+      const workspaceUserIds = workspace.members.map(m => m.user.toString());
+      const filteredMembers = members.filter(id => workspaceUserIds.includes(id.toString()));
+      projectMembers = Array.from(new Set([...projectMembers, ...filteredMembers]));
+    }
+
     const project = await Project.create({
       name,
       description,
       workspace: workspaceId,
       owner: req.user._id,
-      members: [req.user._id], // Creator is the first member
+      members: projectMembers,
       priority: priority || 'medium',
       startDate,
       dueDate
@@ -226,11 +235,11 @@ exports.deleteProject = async (req, res, next) => {
 // @access  Private
 exports.addProjectMember = async (req, res, next) => {
   try {
-    const { userId } = req.body;
+    const { userId, userIds } = req.body;
 
-    if (!userId) {
+    if (!userId && (!userIds || !Array.isArray(userIds) || userIds.length === 0)) {
       res.status(400);
-      throw new Error('Please provide user ID to add');
+      throw new Error('Please provide user ID or user IDs to add');
     }
 
     const project = await Project.findById(req.params.id);
@@ -252,27 +261,37 @@ exports.addProjectMember = async (req, res, next) => {
       throw new Error('Not authorized to add members to this project');
     }
 
-    // Check if the user is a member of the workspace first
-    const isUserInWorkspace = workspace.members.some(
-      (m) => m.user.toString() === userId
-    );
+    const idsToAdd = userIds || [userId];
+    const validIdsToAdd = [];
 
-    if (!isUserInWorkspace) {
-      res.status(400);
-      throw new Error('User must be a member of the workspace before being added to this project');
+    for (const id of idsToAdd) {
+      // Check if the user is a member of the workspace first
+      const isUserInWorkspace = workspace.members.some(
+        (m) => m.user.toString() === id.toString()
+      );
+
+      if (!isUserInWorkspace) {
+        continue;
+      }
+
+      // Check if already in project
+      const alreadyMember = project.members.some(
+        (mId) => mId.toString() === id.toString()
+      );
+
+      if (alreadyMember) {
+        continue;
+      }
+
+      validIdsToAdd.push(id);
     }
 
-    // Check if already in project
-    const alreadyMember = project.members.some(
-      (mId) => mId.toString() === userId
-    );
-
-    if (alreadyMember) {
+    if (validIdsToAdd.length === 0) {
       res.status(400);
-      throw new Error('User is already a member of this project');
+      throw new Error('No valid new members to add (users may not be in workspace or are already in project)');
     }
 
-    project.members.push(userId);
+    project.members.push(...validIdsToAdd);
     await project.save();
 
     const populatedProject = await Project.findById(req.params.id)
@@ -282,7 +301,7 @@ exports.addProjectMember = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      message: 'Project member added successfully',
+      message: 'Project member(s) added successfully',
       data: populatedProject
     });
   } catch (error) {

@@ -1,5 +1,6 @@
 const Message = require('../models/Message');
 const Project = require('../models/Project');
+const { isAuthorizedForProject } = require('../middleware/auth');
 
 // @desc    Get all chat messages for a project
 // @route   GET /api/messages/project/:projectId
@@ -14,12 +15,9 @@ exports.getMessages = async (req, res, next) => {
       throw new Error('Project not found');
     }
 
-    // Verify project membership
-    const isMember = project.members.some(
-      (mId) => mId.toString() === req.user._id.toString()
-    );
-
-    if (!isMember && req.user.role !== 'admin') {
+    // Verify project authorization
+    const authorized = await isAuthorizedForProject(project, req.user);
+    if (!authorized) {
       res.status(403);
       throw new Error('Not authorized to access chat messages for this project');
     }

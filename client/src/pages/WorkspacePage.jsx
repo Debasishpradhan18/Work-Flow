@@ -35,6 +35,7 @@ const WorkspacePage = () => {
   const [projectDesc, setProjectDesc] = useState('');
   const [projectPriority, setProjectPriority] = useState('medium');
   const [projectDueDate, setProjectDueDate] = useState('');
+  const [projectInviteAll, setProjectInviteAll] = useState(true);
   const [projectError, setProjectError] = useState('');
   const [projectLoading, setProjectLoading] = useState(false);
 
@@ -80,12 +81,20 @@ const WorkspacePage = () => {
     setProjectError('');
 
     try {
+      let membersToAdd = [];
+      if (projectInviteAll && workspace?.members) {
+        membersToAdd = workspace.members
+          .filter(m => m.user && m.user._id)
+          .map(m => m.user._id);
+      }
+
       const response = await api.post('/projects', {
         name: projectName.trim(),
         description: projectDesc.trim(),
         workspaceId,
         priority: projectPriority,
-        dueDate: projectDueDate || null
+        dueDate: projectDueDate || null,
+        members: membersToAdd
       });
 
       if (response.data.success) {
@@ -93,6 +102,7 @@ const WorkspacePage = () => {
         setProjectDesc('');
         setProjectPriority('medium');
         setProjectDueDate('');
+        setProjectInviteAll(true);
         setProjectModalOpen(false);
         fetchWorkspaceDetails();
       }
@@ -442,6 +452,19 @@ const WorkspacePage = () => {
                     className="w-full glass-input text-sm"
                   />
                 </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-2">
+                <input
+                  type="checkbox"
+                  id="projectInviteAll"
+                  checked={projectInviteAll}
+                  onChange={(e) => setProjectInviteAll(e.target.checked)}
+                  className="rounded border-white/10 bg-slate-950 text-brand-600 focus:ring-0 focus:ring-offset-0 h-4 w-4"
+                />
+                <label htmlFor="projectInviteAll" className="text-xs font-semibold text-slate-300 cursor-pointer select-none">
+                  Invite all workspace members to this project
+                </label>
               </div>
 
               <div className="flex gap-3 justify-end pt-2">

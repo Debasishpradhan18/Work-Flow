@@ -7,7 +7,7 @@ const Navbar = ({ toggleSidebar, title }) => {
   const { user } = useAuth();
 
   return (
-    <header className="fixed top-0 right-0 left-0 z-30 flex h-16 items-center justify-between border-b border-white/5 bg-slate-950/40 backdrop-blur-xl px-4 md:left-64 md:px-6">
+    <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-white/5 bg-slate-950/80 backdrop-blur-xl px-4 md:px-6">
       {/* Left side: title and mobile toggle */}
       <div className="flex items-center gap-3">
         <button

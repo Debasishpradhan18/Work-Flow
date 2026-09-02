@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
@@ -17,6 +17,7 @@ import {
   Clock,
   AlertTriangle,
   UserCheck,
+  Users,
   Edit,
   Trash
 } from 'lucide-react';
@@ -483,8 +484,41 @@ const ProjectPage = () => {
     (wm) => !project?.members.some((pm) => pm._id.toString() === wm.user._id.toString())
   );
 
+  // All assignable members (combining project members and workspace members)
+  const assignableMembersMap = new Map();
+  if (project?.members) {
+    project.members.forEach((m) => {
+      if (m && m._id) assignableMembersMap.set(m._id.toString(), m);
+    });
+  }
+  if (workspaceMembers) {
+    workspaceMembers.forEach((wm) => {
+      if (wm?.user && wm.user._id) {
+        if (!assignableMembersMap.has(wm.user._id.toString())) {
+          assignableMembersMap.set(wm.user._id.toString(), wm.user);
+        }
+      }
+    });
+  }
+  const allAssignableMembers = Array.from(assignableMembersMap.values());
+
+  // Permission checks
+  const isSysAdmin = user?.role === 'admin';
+  const isProjectOwner = (project?.owner?._id || project?.owner)?.toString() === user?._id?.toString();
+  const userWsMemberObj = workspaceMembers.find(
+    (wm) => (wm.user?._id || wm.user)?.toString() === user?._id?.toString()
+  );
+  const isWsAdmin = userWsMemberObj?.role === 'admin';
+  const isWsManager = userWsMemberObj?.role === 'manager';
+  const isTaskCreator = (selectedTask?.createdBy?._id || selectedTask?.createdBy)?.toString() === user?._id?.toString();
+
+  // Regular members can only update task status (To Do -> In Progress -> Review -> Completed)
+  // Only Managers, Admins, Project Owners, or Task Creators can modify priority, assignee, due date, description or delete task
+  const canManageTask = isSysAdmin || isProjectOwner || isWsAdmin || isWsManager || isTaskCreator;
+  const canDeleteTask = isSysAdmin || isProjectOwner || isWsAdmin || isTaskCreator;
+
   return (
-    <div className="space-y-6 flex flex-col h-[calc(100vh-6rem)]">
+    <div className="space-y-6 flex flex-col">
       {/* Socket Alert popup */}
       {socketNotification && (
         <div className="fixed bottom-4 right-4 z-50 p-4 rounded-xl bg-slate-900 border border-brand-500/30 text-xs text-brand-300 shadow-2xl flex items-center gap-2 animate-bounce">
@@ -493,21 +527,54 @@ const ProjectPage = () => {
         </div>
       )}
 
-      {/* Project Header & Tab list */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-900/20 border-b border-white/5 pb-4">
+      {/* Project Header Banner */}
+      <div className="glass-card p-5 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
         <div>
-          <h1 className="text-xl font-black text-slate-100 tracking-tight">{project?.name}</h1>
-          <p className="text-[10px] text-slate-400 font-semibold mt-1">
-            Status: <strong className="uppercase text-brand-400">{project?.status}</strong> &bull; Priority: <strong className="capitalize text-slate-300">{project?.priority}</strong>
-          </p>
+          <div className="flex items-center gap-2 text-xs font-semibold text-slate-400 mb-1.5">
+            <Link
+              to={`/workspaces/${project?.workspace?._id || project?.workspace}`}
+              className="hover:text-brand-400 transition-colors flex items-center gap-1"
+            >
+              <span>{project?.workspace?.name || 'Workspace'}</span>
+            </Link>
+            <span>&bull;</span>
+            <span className="text-brand-400 font-bold uppercase tracking-wider text-[10px]">Project</span>
+          </div>
+
+          <h1 className="text-xl sm:text-2xl font-black text-slate-100 tracking-tight">
+            {project?.name}
+          </h1>
+
+          {project?.description && (
+            <p className="text-xs text-slate-400 font-medium mt-1.5 max-w-2xl leading-relaxed">
+              {project.description}
+            </p>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2 mt-3 text-[11px] font-semibold">
+            <span className="bg-brand-500/10 border border-brand-500/20 text-brand-400 px-2.5 py-0.5 rounded-md uppercase">
+              {project?.status}
+            </span>
+            <span className="bg-slate-800/80 border border-white/5 text-slate-300 px-2.5 py-0.5 rounded-md capitalize">
+              Priority: <strong className={project?.priority === 'high' ? 'text-red-400' : project?.priority === 'medium' ? 'text-yellow-400' : 'text-slate-300'}>{project?.priority}</strong>
+            </span>
+            {project?.dueDate && (
+              <span className="bg-slate-800/80 border border-white/5 text-slate-400 px-2.5 py-0.5 rounded-md flex items-center gap-1">
+                <Calendar size={12} /> Due: {new Date(project.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+              </span>
+            )}
+            <span className="bg-slate-800/80 border border-white/5 text-slate-400 px-2.5 py-0.5 rounded-md flex items-center gap-1">
+              <Users size={12} /> {project?.members?.length || 1} Member{project?.members?.length !== 1 ? 's' : ''}
+            </span>
+          </div>
         </div>
 
         {/* Tab triggers */}
-        <div className="flex bg-slate-900/60 p-1 rounded-xl border border-white/5 text-xs font-semibold">
+        <div className="flex bg-slate-950/80 p-1.5 rounded-xl border border-white/10 text-xs font-semibold self-stretch sm:self-auto justify-center">
           <button
             onClick={() => setActiveTab('board')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
-              activeTab === 'board' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg transition-all ${
+              activeTab === 'board' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
             }`}
           >
             <KanbanSquare size={14} />
@@ -515,8 +582,8 @@ const ProjectPage = () => {
           </button>
           <button
             onClick={() => setActiveTab('chat')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
-              activeTab === 'chat' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg transition-all ${
+              activeTab === 'chat' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
             }`}
           >
             <MessageSquare size={14} />
@@ -524,8 +591,8 @@ const ProjectPage = () => {
           </button>
           <button
             onClick={() => setActiveTab('settings')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
-              activeTab === 'settings' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg transition-all ${
+              activeTab === 'settings' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
             }`}
           >
             <Settings size={14} />
@@ -543,12 +610,14 @@ const ProjectPage = () => {
               <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500">
                 Kanban Workspace
               </h2>
-              <button
-                onClick={() => setTaskModalOpen(true)}
-                className="glass-btn-primary py-1.5 px-3 text-xs flex items-center gap-1"
-              >
-                <Plus size={14} /> Create Task
-              </button>
+              {canManageTask && (
+                <button
+                  onClick={() => setTaskModalOpen(true)}
+                  className="glass-btn-primary py-1.5 px-3 text-xs flex items-center gap-1"
+                >
+                  <Plus size={14} /> Create Task
+                </button>
+              )}
             </div>
 
             {/* Board Columns */}
@@ -599,7 +668,7 @@ const ProjectPage = () => {
 
                               {t.assignedTo ? (
                                 <span className="flex items-center gap-1 font-medium truncate max-w-[80px]">
-                                  {t.assignedTo.name}
+                                  {typeof t.assignedTo === 'object' ? t.assignedTo.name : (allAssignableMembers.find(m => m._id === t.assignedTo)?.name || 'Assigned')}
                                 </span>
                               ) : (
                                 <span className="text-slate-600 font-semibold">Unassigned</span>
@@ -618,63 +687,64 @@ const ProjectPage = () => {
 
         {/* TAB 2: Project Chat Room */}
         {activeTab === 'chat' && (
-          <div className="h-[calc(100vh-17rem)] flex flex-col bg-slate-900/20 border border-white/5 rounded-2xl overflow-hidden">
-            {/* Socket connection indicator */}
-            <div className="px-4 py-2 bg-slate-950/40 border-b border-white/5 flex items-center justify-between text-[10px]">
-              <span className="text-slate-400 font-semibold uppercase tracking-wider">
-                Project Chat Channel
-              </span>
-              <span className={`flex items-center gap-1.5 ${isConnected ? 'text-emerald-400' : 'text-yellow-400 animate-pulse'}`}>
-                <span className={`h-2 w-2 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-yellow-500'}`}></span>
-                {isConnected ? 'Connected (Real-time enabled)' : 'Connecting socket...'}
-              </span>
+          <div className="h-[calc(100vh-14rem)] glass-card flex flex-col overflow-hidden">
+            <div className="p-4 border-b border-white/5 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
+                  <MessageSquare size={16} className="text-brand-400" />
+                  {project?.name} Channel
+                </h3>
+                <p className="text-[10px] text-slate-500">
+                  Real-time team chat for updates, attachments, and blockers.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`inline-block w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}`}></span>
+                <span className="text-[10px] text-slate-400 font-medium">{isConnected ? 'Live' : 'Connecting...'}</span>
+              </div>
             </div>
 
-            {/* Chat message logs */}
+            {/* Chat message bubbles */}
             <div className="flex-1 p-4 overflow-y-auto space-y-4">
               {messages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-slate-600">
-                  <MessageSquare size={36} className="mb-2 opacity-50" />
-                  <p className="text-xs font-semibold">No messages in room</p>
-                  <p className="text-[10px] opacity-75">Send a message to kickstart discussions.</p>
+                <div className="h-full flex flex-col items-center justify-center text-center p-8">
+                  <MessageSquare size={32} className="text-slate-700 mb-2" />
+                  <p className="text-xs text-slate-400 font-semibold">No messages yet</p>
+                  <p className="text-[10px] text-slate-600 mt-1 max-w-xs">
+                    Start the discussion with your project teammates in real time.
+                  </p>
                 </div>
               ) : (
                 messages.map((msg) => {
-                  const isMsgSelf = msg.sender._id.toString() === user?._id.toString();
+                  const isSelf = (msg.sender?._id || msg.sender)?.toString() === user?._id?.toString();
                   return (
                     <div
-                      key={msg._id}
-                      className={`flex gap-3 max-w-[80%] ${isMsgSelf ? 'ml-auto flex-row-reverse' : ''}`}
+                      key={msg._id || Math.random()}
+                      className={`flex gap-2.5 ${isSelf ? 'flex-row-reverse' : 'flex-row'}`}
                     >
-                      {/* Avatar */}
-                      {msg.sender.avatar ? (
+                      {msg.sender?.avatar ? (
                         <img
                           src={msg.sender.avatar}
                           alt={msg.sender.name}
-                          className="h-8 w-8 rounded-full object-cover flex-shrink-0"
+                          className="h-7 w-7 rounded-full object-cover flex-shrink-0"
                         />
                       ) : (
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-800 text-slate-300 border border-white/5 font-bold text-xs uppercase flex-shrink-0">
-                          {msg.sender.name.charAt(0)}
+                        <div className="h-7 w-7 rounded-full bg-brand-600 text-white flex items-center justify-center text-[10px] font-bold uppercase flex-shrink-0">
+                          {msg.sender?.name?.charAt(0) || 'U'}
                         </div>
                       )}
 
-                      {/* Bubble */}
-                      <div className={`space-y-1 ${isMsgSelf ? 'text-right' : ''}`}>
-                        <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
-                          <span className="font-bold text-slate-400">{msg.sender.name}</span>
-                          <span>&bull;</span>
+                      <div className={`max-w-[75%] space-y-1 ${isSelf ? 'items-end text-right' : 'items-start text-left'}`}>
+                        <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                          <span className="font-semibold text-slate-300">{msg.sender?.name}</span>
                           <span>
-                            {new Date(msg.createdAt).toLocaleTimeString(undefined, {
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })}
+                            {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </span>
                         </div>
-                        <div className={`p-3 rounded-2xl text-xs leading-relaxed break-words text-left ${
-                          isMsgSelf
-                            ? 'bg-brand-600 text-white rounded-tr-none shadow-md shadow-brand-500/10'
-                            : 'bg-slate-900 border border-white/5 text-slate-200 rounded-tl-none'
+                        <div className={`p-3 rounded-2xl text-xs inline-block leading-relaxed break-words ${
+                          isSelf
+                            ? 'bg-brand-600 text-white rounded-tr-none'
+                            : 'bg-slate-900/80 border border-white/5 text-slate-200 rounded-tl-none'
                         }`}>
                           {msg.message}
                         </div>
@@ -683,23 +753,21 @@ const ProjectPage = () => {
                   );
                 })
               )}
-              <div ref={chatBottomRef}></div>
+              <div ref={chatBottomRef} />
             </div>
 
-            {/* Input box */}
+            {/* Chat input form */}
             <form onSubmit={handleSendMessage} className="p-3 bg-slate-950/40 border-t border-white/5 flex gap-2">
               <input
                 type="text"
-                placeholder="Type your project message..."
+                placeholder={`Message #${project?.name}...`}
                 value={newMessageText}
                 onChange={(e) => setNewMessageText(e.target.value)}
-                className="flex-1 glass-input py-2 text-xs"
-                disabled={!isConnected}
+                className="flex-1 glass-input text-xs"
               />
               <button
                 type="submit"
-                className="glass-btn-primary p-2 flex items-center justify-center"
-                disabled={!isConnected || !newMessageText.trim()}
+                className="glass-btn-primary px-4 flex items-center justify-center"
               >
                 <Send size={14} />
               </button>
@@ -707,45 +775,73 @@ const ProjectPage = () => {
           </div>
         )}
 
-        {/* TAB 3: Project Settings & Members */}
+        {/* TAB 3: Project Settings */}
         {activeTab === 'settings' && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Project parameters edit */}
-            <div className="md:col-span-2 glass-card space-y-4 h-fit">
+            <div className="md:col-span-2 glass-card space-y-6">
               <h3 className="text-sm font-bold text-slate-200 pb-2 border-b border-white/5">
-                Project Parameters
+                Project Settings & Details
               </h3>
-              
-              <div className="space-y-4 text-sm">
+
+              <div className="space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">
-                    Status
+                    Project Name
                   </label>
-                  <select
-                    value={project?.status}
-                    onChange={(e) => handleUpdateProjectSettings({ status: e.target.value })}
+                  <input
+                    type="text"
+                    defaultValue={project?.name}
+                    onBlur={(e) => canManageTask && handleUpdateProjectSettings({ name: e.target.value })}
+                    disabled={!canManageTask}
                     className="w-full glass-input text-xs"
-                  >
-                    <option value="planning">Planning</option>
-                    <option value="active">Active</option>
-                    <option value="on-hold">On Hold</option>
-                    <option value="completed">Completed</option>
-                  </select>
+                  />
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">
-                    Priority
+                    Description
                   </label>
-                  <select
-                    value={project?.priority}
-                    onChange={(e) => handleUpdateProjectSettings({ priority: e.target.value })}
-                    className="w-full glass-input text-xs"
-                  >
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                  </select>
+                  <textarea
+                    defaultValue={project?.description}
+                    onBlur={(e) => canManageTask && handleUpdateProjectSettings({ description: e.target.value })}
+                    disabled={!canManageTask}
+                    rows={3}
+                    className="w-full glass-input text-xs resize-none"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">
+                      Status
+                    </label>
+                    <select
+                      defaultValue={project?.status}
+                      onChange={(e) => canManageTask && handleUpdateProjectSettings({ status: e.target.value })}
+                      disabled={!canManageTask}
+                      className="w-full bg-slate-950 border border-white/10 rounded-xl p-2.5 text-xs focus:outline-none"
+                    >
+                      <option value="planning">Planning</option>
+                      <option value="active">Active</option>
+                      <option value="on-hold">On-Hold</option>
+                      <option value="completed">Completed</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">
+                      Priority
+                    </label>
+                    <select
+                      defaultValue={project?.priority}
+                      onChange={(e) => canManageTask && handleUpdateProjectSettings({ priority: e.target.value })}
+                      disabled={!canManageTask}
+                      className="w-full bg-slate-950 border border-white/10 rounded-xl p-2.5 text-xs focus:outline-none"
+                    >
+                      <option value="low">Low</option>
+                      <option value="medium">Medium</option>
+                      <option value="high">High</option>
+                    </select>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
@@ -756,7 +852,8 @@ const ProjectPage = () => {
                     <input
                       type="date"
                       value={project?.startDate ? new Date(project.startDate).toISOString().split('T')[0] : ''}
-                      onChange={(e) => handleUpdateProjectSettings({ startDate: e.target.value })}
+                      onChange={(e) => canManageTask && handleUpdateProjectSettings({ startDate: e.target.value })}
+                      disabled={!canManageTask}
                       className="w-full glass-input text-xs"
                     />
                   </div>
@@ -767,7 +864,8 @@ const ProjectPage = () => {
                     <input
                       type="date"
                       value={project?.dueDate ? new Date(project.dueDate).toISOString().split('T')[0] : ''}
-                      onChange={(e) => handleUpdateProjectSettings({ dueDate: e.target.value })}
+                      onChange={(e) => canManageTask && handleUpdateProjectSettings({ dueDate: e.target.value })}
+                      disabled={!canManageTask}
                       className="w-full glass-input text-xs"
                     />
                   </div>
@@ -782,7 +880,7 @@ const ProjectPage = () => {
               </h3>
 
               {/* Add member dropdown */}
-              {candidateMembers.length > 0 && (
+              {canManageTask && candidateMembers.length > 0 && (
                 <div className="space-y-2">
                   <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">
                     Add Workspace Member
@@ -820,7 +918,7 @@ const ProjectPage = () => {
                         <span className="font-semibold text-slate-300 truncate">{m.name}</span>
                       </div>
 
-                      {!isPMOwner && (
+                      {canManageTask && !isPMOwner && (
                         <button
                           onClick={() => handleRemoveProjectMember(m._id)}
                           className="p-1 rounded text-slate-500 hover:text-red-400 hover:bg-white/5"
@@ -849,8 +947,7 @@ const ProjectPage = () => {
               <X size={18} />
             </button>
 
-            <h3 className="text-lg font-bold text-slate-100 mb-4">Create Project Task</h3>
-
+            <h3 className="text-lg font-bold text-slate-100 mb-4">Create New Task</h3>
             {taskError && (
               <div className="mb-4 p-3 rounded-xl bg-red-950/40 border border-red-500/20 text-xs text-red-200">
                 {taskError}
@@ -864,7 +961,7 @@ const ProjectPage = () => {
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. Design Login UI, Implement APIs"
+                  placeholder="e.g. Design Login UI"
                   value={taskTitle}
                   onChange={(e) => setTaskTitle(e.target.value)}
                   className="w-full glass-input"
@@ -896,7 +993,7 @@ const ProjectPage = () => {
                     className="w-full bg-slate-950 border border-white/10 rounded-xl p-2.5 text-xs focus:outline-none"
                   >
                     <option value="">Unassigned</option>
-                    {project?.members.map((m) => (
+                    {allAssignableMembers.map((m) => (
                       <option key={m._id} value={m._id}>
                         {m.name}
                       </option>
@@ -980,35 +1077,41 @@ const ProjectPage = () => {
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">
                   Description
                 </label>
-                {detailDescEditing ? (
-                  <div className="space-y-2">
-                    <textarea
-                      value={detailDesc}
-                      onChange={(e) => setDetailDesc(e.target.value)}
-                      rows={3}
-                      className="w-full glass-input text-xs resize-none"
-                    />
-                    <div className="flex gap-2 justify-end">
-                      <button
-                        onClick={() => setDetailDescEditing(false)}
-                        className="glass-btn-secondary py-1 px-3 text-[10px]"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={handleSaveDescription}
-                        className="glass-btn-primary py-1 px-3 text-[10px]"
-                      >
-                        Save
-                      </button>
+                {canManageTask ? (
+                  detailDescEditing ? (
+                    <div className="space-y-2">
+                      <textarea
+                        value={detailDesc}
+                        onChange={(e) => setDetailDesc(e.target.value)}
+                        rows={3}
+                        className="w-full glass-input text-xs resize-none"
+                      />
+                      <div className="flex gap-2 justify-end">
+                        <button
+                          onClick={() => setDetailDescEditing(false)}
+                          className="glass-btn-secondary py-1 px-3 text-[10px]"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleSaveDescription}
+                          className="glass-btn-primary py-1 px-3 text-[10px]"
+                        >
+                          Save
+                        </button>
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div
+                      onClick={() => setDetailDescEditing(true)}
+                      className="p-3 rounded-xl bg-slate-950/40 border border-white/5 hover:border-white/10 cursor-pointer text-xs text-slate-300 min-h-16 whitespace-pre-wrap leading-relaxed"
+                    >
+                      {selectedTask.description || 'Click to add a detailed description...'}
+                    </div>
+                  )
                 ) : (
-                  <div
-                    onClick={() => setDetailDescEditing(true)}
-                    className="p-3 rounded-xl bg-slate-950/40 border border-white/5 hover:border-white/10 cursor-pointer text-xs text-slate-300 min-h-16 whitespace-pre-wrap leading-relaxed"
-                  >
-                    {selectedTask.description || 'Click to add a detailed description...'}
+                  <div className="p-3 rounded-xl bg-slate-950/40 border border-white/5 text-xs text-slate-300 min-h-16 whitespace-pre-wrap leading-relaxed">
+                    {selectedTask.description || 'No description provided.'}
                   </div>
                 )}
               </div>
@@ -1049,16 +1152,16 @@ const ProjectPage = () => {
                         href={file.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-brand-400 hover:text-brand-300 font-semibold truncate max-w-[150px]"
-                        title={file.filename}
+                        className="truncate text-brand-400 hover:underline max-w-[140px]"
                       >
                         {file.filename}
                       </a>
                       <button
                         onClick={() => handleDeleteAttachment(file._id)}
-                        className="p-1 rounded text-slate-500 hover:text-red-400 hover:bg-white/5"
+                        className="text-slate-500 hover:text-red-400"
+                        title="Delete Attachment"
                       >
-                        <Trash size={12} />
+                        <Trash2 size={12} />
                       </button>
                     </div>
                   ))}
@@ -1135,7 +1238,7 @@ const ProjectPage = () => {
                 <select
                   value={selectedTask.status}
                   onChange={(e) => handleUpdateTaskDetail({ status: e.target.value })}
-                  className="w-full bg-slate-950 border border-white/10 rounded-xl p-2 text-xs focus:outline-none"
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl p-2 text-xs focus:outline-none text-slate-200"
                 >
                   <option value="todo">To Do</option>
                   <option value="in-progress">In Progress</option>
@@ -1149,15 +1252,23 @@ const ProjectPage = () => {
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
                   Priority
                 </label>
-                <select
-                  value={selectedTask.priority}
-                  onChange={(e) => handleUpdateTaskDetail({ priority: e.target.value })}
-                  className="w-full bg-slate-950 border border-white/10 rounded-xl p-2 text-xs focus:outline-none"
-                >
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                </select>
+                {canManageTask ? (
+                  <select
+                    value={selectedTask.priority}
+                    onChange={(e) => handleUpdateTaskDetail({ priority: e.target.value })}
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl p-2 text-xs focus:outline-none text-slate-200"
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                ) : (
+                  <div className="p-2 rounded-xl bg-slate-950/60 border border-white/5 text-xs font-semibold capitalize">
+                    <span className={selectedTask.priority === 'high' ? 'text-red-400' : selectedTask.priority === 'medium' ? 'text-yellow-400' : 'text-slate-300'}>
+                      {selectedTask.priority}
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Assignee */}
@@ -1165,18 +1276,24 @@ const ProjectPage = () => {
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
                   Assignee
                 </label>
-                <select
-                  value={selectedTask.assignedTo?._id || ''}
-                  onChange={(e) => handleUpdateTaskDetail({ assignedTo: e.target.value || null })}
-                  className="w-full bg-slate-950 border border-white/10 rounded-xl p-2 text-xs focus:outline-none"
-                >
-                  <option value="">Unassigned</option>
-                  {project?.members.map((m) => (
-                    <option key={m._id} value={m._id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
+                {canManageTask ? (
+                  <select
+                    value={selectedTask.assignedTo?._id || (typeof selectedTask.assignedTo === 'string' ? selectedTask.assignedTo : '')}
+                    onChange={(e) => handleUpdateTaskDetail({ assignedTo: e.target.value || null })}
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl p-2 text-xs focus:outline-none text-slate-200"
+                  >
+                    <option value="">Unassigned</option>
+                    {allAssignableMembers.map((m) => (
+                      <option key={m._id} value={m._id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="p-2 rounded-xl bg-slate-950/60 border border-white/5 text-xs text-slate-200 truncate">
+                    {selectedTask.assignedTo?.name || (typeof selectedTask.assignedTo === 'string' ? allAssignableMembers.find(m => m._id === selectedTask.assignedTo)?.name : 'Unassigned')}
+                  </div>
+                )}
               </div>
 
               {/* Due Date */}
@@ -1184,12 +1301,18 @@ const ProjectPage = () => {
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
                   Due Date
                 </label>
-                <input
-                  type="date"
-                  value={selectedTask.dueDate ? new Date(selectedTask.dueDate).toISOString().split('T')[0] : ''}
-                  onChange={(e) => handleUpdateTaskDetail({ dueDate: e.target.value || null })}
-                  className="w-full bg-slate-950 border border-white/10 rounded-xl p-2 text-xs focus:outline-none text-slate-300"
-                />
+                {canManageTask ? (
+                  <input
+                    type="date"
+                    value={selectedTask.dueDate ? new Date(selectedTask.dueDate).toISOString().split('T')[0] : ''}
+                    onChange={(e) => handleUpdateTaskDetail({ dueDate: e.target.value || null })}
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl p-2 text-xs focus:outline-none text-slate-300"
+                  />
+                ) : (
+                  <div className="p-2 rounded-xl bg-slate-950/60 border border-white/5 text-xs text-slate-300">
+                    {selectedTask.dueDate ? new Date(selectedTask.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : 'No due date'}
+                  </div>
+                )}
               </div>
 
               {/* Creator details */}
@@ -1206,14 +1329,16 @@ const ProjectPage = () => {
               </div>
 
               {/* Action: Delete Task */}
-              <div className="pt-2">
-                <button
-                  onClick={() => handleDeleteTask(selectedTask._id)}
-                  className="w-full glass-btn-danger text-[10px] py-2 flex items-center justify-center gap-1"
-                >
-                  <Trash2 size={12} /> Delete Task
-                </button>
-              </div>
+              {canDeleteTask && (
+                <div className="pt-2">
+                  <button
+                    onClick={() => handleDeleteTask(selectedTask._id)}
+                    className="w-full glass-btn-danger text-[10px] py-2 flex items-center justify-center gap-1"
+                  >
+                    <Trash2 size={12} /> Delete Task
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

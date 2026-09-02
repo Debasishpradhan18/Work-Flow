@@ -1,6 +1,7 @@
 const Comment = require('../models/Comment');
 const Task = require('../models/Task');
 const Notification = require('../models/Notification');
+const { isAuthorizedForProject } = require('../middleware/auth');
 
 // @desc    Add comment to task
 // @route   POST /api/comments/task/:taskId
@@ -23,11 +24,8 @@ exports.createComment = async (req, res, next) => {
     }
 
     const project = task.project;
-    const isMember = project && project.members.some(
-      (mId) => mId.toString() === req.user._id.toString()
-    );
-
-    if (!isMember && req.user.role !== 'admin') {
+    const authorized = await isAuthorizedForProject(project, req.user);
+    if (!authorized) {
       res.status(403);
       throw new Error('Not authorized to comment on tasks in this project');
     }
@@ -126,7 +124,7 @@ exports.deleteComment = async (req, res, next) => {
     const task = await Task.findById(comment.task).populate('project');
     const isAuthor = comment.author.toString() === req.user._id.toString();
     const isTaskCreator = task && task.createdBy.toString() === req.user._id.toString();
-    const isProjectOwner = task && task.project.owner.toString() === req.user._id.toString();
+    const isProjectOwner = task && task.project && (task.project.owner?._id || task.project.owner).toString() === req.user._id.toString();
 
     if (!isAuthor && !isTaskCreator && !isProjectOwner && req.user.role !== 'admin') {
       res.status(403);
@@ -157,11 +155,8 @@ exports.getCommentsByTask = async (req, res, next) => {
     }
 
     // Verify membership
-    const isMember = task.project && task.project.members.some(
-      (mId) => mId.toString() === req.user._id.toString()
-    );
-
-    if (!isMember && req.user.role !== 'admin') {
+    const authorized = await isAuthorizedForProject(task.project, req.user);
+    if (!authorized) {
       res.status(403);
       throw new Error('Not authorized to view comments on this task');
     }

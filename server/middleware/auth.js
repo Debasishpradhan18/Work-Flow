@@ -69,4 +69,39 @@ const authorize = (...roles) => {
   };
 };
 
-module.exports = { protect, authorize };
+// Check if user is authorized for a project (direct member, project owner, or member/admin/owner of the parent workspace)
+const isAuthorizedForProject = async (project, user) => {
+  if (!project || !user) return false;
+
+  // System admin has full access
+  if (user.role === 'admin') return true;
+
+  // Project owner has full access
+  const projectOwnerId = project.owner?._id || project.owner;
+  if (projectOwnerId && projectOwnerId.toString() === user._id.toString()) {
+    return true;
+  }
+
+  // Direct project member
+  if (project.members && project.members.some((mId) => (mId._id || mId).toString() === user._id.toString())) {
+    return true;
+  }
+
+  // Workspace member (owner, admin, manager, or member of the project's workspace)
+  const workspaceId = project.workspace?._id || project.workspace;
+  if (workspaceId) {
+    const Workspace = require('../models/Workspace');
+    const workspace = await Workspace.findById(workspaceId);
+    if (workspace) {
+      if (workspace.owner && workspace.owner.toString() === user._id.toString()) return true;
+      const isWsMember = workspace.members && workspace.members.some(
+        (m) => (m.user?._id || m.user).toString() === user._id.toString()
+      );
+      if (isWsMember) return true;
+    }
+  }
+
+  return false;
+};
+
+module.exports = { protect, authorize, isAuthorizedForProject };
