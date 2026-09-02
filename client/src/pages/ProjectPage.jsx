@@ -184,6 +184,18 @@ const ProjectPage = () => {
     setNewMessageText('');
   };
 
+  const handleClearProjectChat = async () => {
+    if (!window.confirm('Are you sure you want to clear all chat messages in this project channel?')) {
+      return;
+    }
+    try {
+      await api.delete(`/messages/project/${projectId}`);
+      setMessages([]);
+    } catch (err) {
+      console.error('Failed to clear chat messages:', err);
+    }
+  };
+
   // Kanban Drag and Drop logic (HTML5 Native Drag and Drop)
   const handleDragStart = (e, task) => {
     e.dataTransfer.setData('text/plain', task._id);
@@ -698,9 +710,22 @@ const ProjectPage = () => {
                   Real-time team chat for updates, attachments, and blockers.
                 </p>
               </div>
-              <div className="flex items-center gap-2">
-                <span className={`inline-block w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}`}></span>
-                <span className="text-[10px] text-slate-400 font-medium">{isConnected ? 'Live' : 'Connecting...'}</span>
+              <div className="flex items-center gap-3">
+                {canManageTask && messages.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearProjectChat}
+                    className="flex items-center gap-1.5 text-[11px] text-red-400 hover:text-red-300 font-semibold px-2.5 py-1 rounded-lg hover:bg-red-500/10 transition-all cursor-pointer"
+                    title="Clear channel chat messages"
+                  >
+                    <Trash2 size={12} />
+                    <span>Clear chat</span>
+                  </button>
+                )}
+                <div className="flex items-center gap-2">
+                  <span className={`inline-block w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}`}></span>
+                  <span className="text-[10px] text-slate-400 font-medium">{isConnected ? 'Live' : 'Connecting...'}</span>
+                </div>
               </div>
             </div>
 
